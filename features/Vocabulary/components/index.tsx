@@ -2,11 +2,18 @@
 
 import clsx from 'clsx';
 import { chunkArray } from '@/shared/lib/helperFunctions';
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { cardBorderStyles } from '@/shared/lib/styles';
 import useGridColumns from '@/shared/hooks/useGridColumns';
 import { useClick } from '@/shared/hooks/useAudio';
-import { ChevronUp, CircleCheck, Circle, Filter, FilterX } from 'lucide-react';
+import {
+  ChevronUp,
+  CircleCheck,
+  Circle,
+  Filter,
+  FilterX,
+  Loader2
+} from 'lucide-react';
 import useVocabStore from '@/features/Vocabulary/store/useVocabStore';
 import useStatsStore from '@/features/Progress/store/useStatsStore';
 import VocabSetDictionary from '@/features/Vocabulary/components/SetDictionary';
@@ -18,6 +25,8 @@ import {
 
 const levelOrder: VocabLevel[] = ['n5', 'n4', 'n3', 'n2', 'n1'];
 const WORDS_PER_SET = 10;
+const INITIAL_ROWS = 5;
+const ROWS_PER_LOAD = 5;
 
 const vocabCollectionNames: Record<VocabLevel, string> = {
   n5: 'N5',
@@ -138,6 +147,109 @@ const VocabCards = () => {
   const [collapsedRows, setCollapsedRows] = useState<number[]>([]);
   const numColumns = useGridColumns();
 
+  // Pagination state
+  const [visibleRowCount, setVisibleRowCount] = useState(INITIAL_ROWS);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const loaderRef = useRef<HTMLDivElement>(null);
+
+  // Reset visible rows when collection or filter changes
+  useEffect(() => {
+    setVisibleRowCount(INITIAL_ROWS);
+  }, [selectedVocabCollectionName, hideMastered]);
+
+  // Check if a set contains only mastered vocab
+  const isSetMastered = useCallback(
+    (setStart: number, setEnd: number) => {
+      if (!selectedVocabCollection) return false;
+      const wordsInSet = selectedVocabCollection.data.slice(
+        setStart * WORDS_PER_SET,
+        setEnd * WORDS_PER_SET
+      );
+      return wordsInSet.every((vocab: { word: string }) =>
+        masteredWords.has(vocab.word)
+      );
+    },
+    [selectedVocabCollection, masteredWords]
+  );
+
+  // Memoize vocab sets computation
+  const {
+    vocabSetsTemp,
+    filteredVocabSets,
+    masteredCount,
+    allRows,
+    totalRows
+  } = useMemo(() => {
+    if (!selectedVocabCollection) {
+      return {
+        vocabSetsTemp: [],
+        filteredVocabSets: [],
+        masteredCount: 0,
+        allRows: [],
+        totalRows: 0
+      };
+    }
+
+    const sets = new Array(
+      Math.ceil(selectedVocabCollection.data.length / WORDS_PER_SET)
+    )
+      .fill({})
+      .map((_, i) => ({
+        name: `Set ${selectedVocabCollection.prevLength + i + 1}`,
+        start: i,
+        end: i + 1,
+        id: `Set ${i + 1}`,
+        isMastered: isSetMastered(i, i + 1)
+      }));
+
+    const filtered = hideMastered ? sets.filter(set => !set.isMastered) : sets;
+
+    const mastered = sets.filter(set => set.isMastered).length;
+    const rows = chunkArray(filtered, numColumns);
+
+    return {
+      vocabSetsTemp: sets,
+      filteredVocabSets: filtered,
+      masteredCount: mastered,
+      allRows: rows,
+      totalRows: rows.length
+    };
+  }, [selectedVocabCollection, hideMastered, numColumns, isSetMastered]);
+
+  const visibleRows = allRows.slice(0, visibleRowCount);
+  const hasMoreRows = visibleRowCount < totalRows;
+
+  // Load more rows callback
+  const loadMoreRows = useCallback(() => {
+    if (isLoadingMore || !hasMoreRows) return;
+    setIsLoadingMore(true);
+    setTimeout(() => {
+      setVisibleRowCount(prev => Math.min(prev + ROWS_PER_LOAD, totalRows));
+      setIsLoadingMore(false);
+    }, 150);
+  }, [isLoadingMore, hasMoreRows, totalRows]);
+
+  // Intersection Observer for infinite scroll
+  useEffect(() => {
+    const loader = loaderRef.current;
+    if (!loader) return;
+
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries[0].isIntersecting && hasMoreRows && !isLoadingMore) {
+          loadMoreRows();
+        }
+      },
+      { rootMargin: '200px' }
+    );
+
+    observer.observe(loader);
+    return () => observer.disconnect();
+  }, [hasMoreRows, isLoadingMore, loadMoreRows]);
+
+  // Check if user has any progress data
+  const hasProgressData = Object.keys(allTimeStats.characterMastery).length > 0;
+
   if (!selectedVocabCollection) {
     return (
       <div className={clsx('flex flex-col w-full gap-4')}>
@@ -149,39 +261,6 @@ const VocabCards = () => {
       </div>
     );
   }
-
-  // Check if a set contains only mastered vocab
-  const isSetMastered = (setStart: number, setEnd: number) => {
-    const wordsInSet = selectedVocabCollection.data.slice(
-      setStart * WORDS_PER_SET,
-      setEnd * WORDS_PER_SET
-    );
-    return wordsInSet.every((vocab: { word: string }) =>
-      masteredWords.has(vocab.word)
-    );
-  };
-
-  const vocabSetsTemp = new Array(
-    Math.ceil(selectedVocabCollection.data.length / WORDS_PER_SET)
-  )
-    .fill({})
-    .map((_, i) => ({
-      name: `Set ${selectedVocabCollection.prevLength + i + 1}`,
-      start: i,
-      end: i + 1,
-      id: `Set ${i + 1}`,
-      isMastered: isSetMastered(i, i + 1)
-    }));
-
-  // Filter out mastered sets if hideMastered is true
-  const filteredVocabSets = hideMastered
-    ? vocabSetsTemp.filter(set => !set.isMastered)
-    : vocabSetsTemp;
-
-  const masteredCount = vocabSetsTemp.filter(set => set.isMastered).length;
-
-  // Check if user has any progress data
-  const hasProgressData = Object.keys(allTimeStats.characterMastery).length > 0;
 
   return (
     <div className='flex flex-col w-full gap-4'>
@@ -232,7 +311,7 @@ const VocabCards = () => {
         </div>
       )}
 
-      {chunkArray(filteredVocabSets, numColumns).map((rowSets, rowIndex) => {
+      {visibleRows.map((rowSets, rowIndex) => {
         const firstSetNumber = rowSets[0]?.name.match(/\d+/)?.[0] || '1';
         const lastSetNumber =
           rowSets[rowSets.length - 1]?.name.match(/\d+/)?.[0] || firstSetNumber;
@@ -343,6 +422,21 @@ const VocabCards = () => {
           </div>
         );
       })}
+
+      {/* Infinite scroll loader */}
+      <div ref={loaderRef} className='flex justify-center py-4'>
+        {isLoadingMore && (
+          <Loader2
+            className='animate-spin text-[var(--secondary-color)]'
+            size={24}
+          />
+        )}
+        {hasMoreRows && !isLoadingMore && (
+          <span className='text-sm text-[var(--secondary-color)]'>
+            Scroll for more ({totalRows - visibleRowCount} rows remaining)
+          </span>
+        )}
+      </div>
     </div>
   );
 };

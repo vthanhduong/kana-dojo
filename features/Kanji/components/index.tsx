@@ -2,11 +2,18 @@
 
 import clsx from 'clsx';
 import { chunkArray } from '@/shared/lib/helperFunctions';
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { cardBorderStyles } from '@/shared/lib/styles';
 import useGridColumns from '@/shared/hooks/useGridColumns';
 import { useClick } from '@/shared/hooks/useAudio';
-import { ChevronUp, CircleCheck, Circle, Filter, FilterX } from 'lucide-react';
+import {
+  ChevronUp,
+  CircleCheck,
+  Circle,
+  Filter,
+  FilterX,
+  Loader2
+} from 'lucide-react';
 import useKanjiStore from '@/features/Kanji/store/useKanjiStore';
 import useStatsStore from '@/features/Progress/store/useStatsStore';
 import KanjiSetDictionary from '@/features/Kanji/components/SetDictionary';
@@ -17,6 +24,9 @@ import {
 } from '@/features/Kanji/services/kanjiDataService';
 
 const levelOrder: KanjiLevel[] = ['n5', 'n4', 'n3', 'n2', 'n1'];
+const KANJI_PER_SET = 10;
+const INITIAL_ROWS = 5;
+const ROWS_PER_LOAD = 5;
 
 type KanjiCollectionMeta = {
   data: IKanjiObj[];
@@ -114,6 +124,16 @@ const KanjiCards = () => {
   const [collapsedRows, setCollapsedRows] = useState<number[]>([]);
   const numColumns = useGridColumns();
 
+  // Pagination state
+  const [visibleRowCount, setVisibleRowCount] = useState(INITIAL_ROWS);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const loaderRef = useRef<HTMLDivElement>(null);
+
+  // Reset visible rows when collection or filter changes
+  useEffect(() => {
+    setVisibleRowCount(INITIAL_ROWS);
+  }, [selectedKanjiCollectionName, hideMastered]);
+
   // Calculate mastered characters (accuracy >= 90%, attempts >= 10)
   const masteredCharacters = useMemo(() => {
     const mastered = new Set<string>();
@@ -124,25 +144,102 @@ const KanjiCards = () => {
         mastered.add(char);
       }
     });
-
-    // Debug log to see mastery data
-    if (typeof window !== 'undefined') {
-      console.log(
-        '[Kanji Filter] Total characters tracked:',
-        Object.keys(allTimeStats.characterMastery).length
-      );
-      console.log('[Kanji Filter] Mastered characters:', mastered.size);
-      console.log(
-        '[Kanji Filter] Sample mastered:',
-        Array.from(mastered).slice(0, 5)
-      );
-    }
-
     return mastered;
   }, [allTimeStats.characterMastery]);
 
   const selectedKanjiCollection =
     kanjiCollections[selectedKanjiCollectionName as KanjiLevel];
+
+  // Check if a set contains only mastered kanji
+  const isSetMastered = useCallback(
+    (setStart: number, setEnd: number) => {
+      if (!selectedKanjiCollection) return false;
+      const kanjiInSet = selectedKanjiCollection.data.slice(
+        setStart * KANJI_PER_SET,
+        setEnd * KANJI_PER_SET
+      );
+      return kanjiInSet.every(kanji => masteredCharacters.has(kanji.kanjiChar));
+    },
+    [selectedKanjiCollection, masteredCharacters]
+  );
+
+  // Memoize kanji sets computation
+  const {
+    kanjiSetsTemp,
+    filteredKanjiSets,
+    masteredCount,
+    allRows,
+    totalRows
+  } = useMemo(() => {
+    if (!selectedKanjiCollection) {
+      return {
+        kanjiSetsTemp: [],
+        filteredKanjiSets: [],
+        masteredCount: 0,
+        allRows: [],
+        totalRows: 0
+      };
+    }
+
+    const sets = new Array(
+      Math.ceil(selectedKanjiCollection.data.length / KANJI_PER_SET)
+    )
+      .fill({})
+      .map((_, i) => ({
+        name: `Set ${selectedKanjiCollection.prevLength + i + 1}`,
+        start: i,
+        end: i + 1,
+        id: `Set ${i + 1}`,
+        isMastered: isSetMastered(i, i + 1)
+      }));
+
+    const filtered = hideMastered ? sets.filter(set => !set.isMastered) : sets;
+
+    const mastered = sets.filter(set => set.isMastered).length;
+    const rows = chunkArray(filtered, numColumns);
+
+    return {
+      kanjiSetsTemp: sets,
+      filteredKanjiSets: filtered,
+      masteredCount: mastered,
+      allRows: rows,
+      totalRows: rows.length
+    };
+  }, [selectedKanjiCollection, hideMastered, numColumns, isSetMastered]);
+
+  const visibleRows = allRows.slice(0, visibleRowCount);
+  const hasMoreRows = visibleRowCount < totalRows;
+
+  // Load more rows callback
+  const loadMoreRows = useCallback(() => {
+    if (isLoadingMore || !hasMoreRows) return;
+    setIsLoadingMore(true);
+    setTimeout(() => {
+      setVisibleRowCount(prev => Math.min(prev + ROWS_PER_LOAD, totalRows));
+      setIsLoadingMore(false);
+    }, 150);
+  }, [isLoadingMore, hasMoreRows, totalRows]);
+
+  // Intersection Observer for infinite scroll
+  useEffect(() => {
+    const loader = loaderRef.current;
+    if (!loader) return;
+
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries[0].isIntersecting && hasMoreRows && !isLoadingMore) {
+          loadMoreRows();
+        }
+      },
+      { rootMargin: '200px' }
+    );
+
+    observer.observe(loader);
+    return () => observer.disconnect();
+  }, [hasMoreRows, isLoadingMore, loadMoreRows]);
+
+  // Check if user has any progress data
+  const hasProgressData = Object.keys(allTimeStats.characterMastery).length > 0;
 
   if (!selectedKanjiCollection) {
     return (
@@ -155,37 +252,6 @@ const KanjiCards = () => {
       </div>
     );
   }
-
-  // Check if a set contains only mastered kanji
-  const isSetMastered = (setStart: number, setEnd: number) => {
-    const kanjiInSet = selectedKanjiCollection.data.slice(
-      setStart * 10,
-      setEnd * 10
-    );
-    return kanjiInSet.every(kanji => masteredCharacters.has(kanji.kanjiChar));
-  };
-
-  const kanjiSetsTemp = new Array(
-    Math.ceil(selectedKanjiCollection.data.length / 10)
-  )
-    .fill({})
-    .map((_, i) => ({
-      name: `Set ${selectedKanjiCollection.prevLength + i + 1}`,
-      start: i,
-      end: i + 1,
-      id: `Set ${i + 1}`,
-      isMastered: isSetMastered(i, i + 1)
-    }));
-
-  // Filter out mastered sets if hideMastered is true
-  const filteredKanjiSets = hideMastered
-    ? kanjiSetsTemp.filter(set => !set.isMastered)
-    : kanjiSetsTemp;
-
-  const masteredCount = kanjiSetsTemp.filter(set => set.isMastered).length;
-
-  // Check if user has any progress data
-  const hasProgressData = Object.keys(allTimeStats.characterMastery).length > 0;
 
   return (
     <div className='flex flex-col w-full gap-4'>
@@ -236,7 +302,7 @@ const KanjiCards = () => {
         </div>
       )}
 
-      {chunkArray(filteredKanjiSets, numColumns).map((rowSets, rowIndex) => {
+      {visibleRows.map((rowSets, rowIndex) => {
         const firstSetNumber = rowSets[0]?.name.match(/\d+/)?.[0] || '1';
         const lastSetNumber =
           rowSets[rowSets.length - 1]?.name.match(/\d+/)?.[0] || firstSetNumber;
@@ -285,8 +351,8 @@ const KanjiCards = () => {
               >
                 {rowSets.map((kanjiSetTemp, i) => {
                   const setWords = selectedKanjiCollection.data.slice(
-                    kanjiSetTemp.start * 10,
-                    kanjiSetTemp.end * 10
+                    kanjiSetTemp.start * KANJI_PER_SET,
+                    kanjiSetTemp.end * KANJI_PER_SET
                   );
                   const isSelected = selectedKanjiSets.includes(
                     kanjiSetTemp.name
@@ -347,6 +413,21 @@ const KanjiCards = () => {
           </div>
         );
       })}
+
+      {/* Infinite scroll loader */}
+      <div ref={loaderRef} className='flex justify-center py-4'>
+        {isLoadingMore && (
+          <Loader2
+            className='animate-spin text-[var(--secondary-color)]'
+            size={24}
+          />
+        )}
+        {hasMoreRows && !isLoadingMore && (
+          <span className='text-sm text-[var(--secondary-color)]'>
+            Scroll for more ({totalRows - visibleRowCount} rows remaining)
+          </span>
+        )}
+      </div>
     </div>
   );
 };
