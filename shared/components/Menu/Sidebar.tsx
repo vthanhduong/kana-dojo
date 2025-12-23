@@ -48,7 +48,7 @@ type NavSection = {
 
 const mainNavItems: NavItem[] = [
   { href: '/', label: 'Home', icon: House },
-  { href: '/progress', label: 'Progress', icon: CircleStar },
+  { href: '/progress', label: 'Progress', icon: Star },
   { href: '/kana', label: 'Kana', charIcon: 'あ' },
   { href: '/vocabulary', label: ' Vocabulary', charIcon: '語' },
   { href: '/kanji', label: ' Kanji', charIcon: '字' },
@@ -126,7 +126,7 @@ const NavLink = ({ item, isActive, onClick, variant }: NavLinkProps) => {
       return (
         <Icon
           className={clsx(
-            'shrink-0',
+            'shrink-0 fill-current',
             item.animateWhenInactive &&
               !isActive &&
               'motion-safe:animate-bounce',

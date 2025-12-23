@@ -47,7 +47,7 @@ export const CategoryTabs = ({
               borderRadius='3xl'
               className='w-auto px-4 py-3 text-base font-medium'
             >
-              <CategoryIcon size={18} />
+              <CategoryIcon size={18} className='fill-current' />
               <span>{category.label}</span>
               <span
                 className={clsx(
