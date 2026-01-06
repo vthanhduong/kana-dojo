@@ -71,20 +71,32 @@ const gameContentVariants = {
     opacity: 1,
     x: 0,
     transition: {
-      type: 'spring' as const,
-      stiffness: 350,
-      damping: 30,
-      mass: 0.7
+      x: {
+        type: 'spring' as const,
+        stiffness: 350,
+        damping: 30,
+        mass: 0.7
+      },
+      opacity: {
+        duration: 0.25,
+        ease: [0.0, 0.0, 0.2, 1] as [number, number, number, number]
+      }
     }
   },
   exit: {
     opacity: 0,
     x: -80,
     transition: {
-      type: 'spring' as const,
-      stiffness: 350,
-      damping: 30,
-      mass: 0.7
+      x: {
+        type: 'spring' as const,
+        stiffness: 350,
+        damping: 30,
+        mass: 0.7
+      },
+      opacity: {
+        duration: 0.25,
+        ease: [0.4, 0.0, 1, 1] as [number, number, number, number]
+      }
     }
   }
 };
